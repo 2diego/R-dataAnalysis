@@ -1,0 +1,261 @@
+---
+title: "Empresas habilitadas en Olavarría durante el 2022"
+author: "Diego Maldonado"
+date: "2023-04-24"
+output: html_document
+---
+<style type="text/css">
+.main-container {
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+# Análisis de empresas habilitadas en Olavarría durante los años 2018 a 2022
+
+## Carga de datos
+```{r EmpHab, message=FALSE}
+library(readxl)
+library(dplyr)
+
+data <- read.csv("~/R/Empresashabilitadas2022.csv")
+
+# Eliminar columnas sin uso
+data <- data %>%
+  select(-NOMBRE, -ACTIVIDAD_REAL, -CALLE, -NRO)
+# Mutar S/D a NA en lat y long
+data <- data %>%
+  mutate(lat = na_if(lat, "S/D"), long = na_if(long, "S/D"))
+# Check de NA en lat y long por falta de datos en CALLE/NRO (477)
+long_NA <- sum(is.na(data$long))
+lat_NA <- sum(is.na(data$lat))
+# Cambiar FECHA_ALTA dejando sólo el año
+data$FECHA_ALTA <- as.Date(data$FECHA_ALTA, format = "%d/%m/%Y")
+data$FECHA_ALTA <- format(data$FECHA_ALTA, "%Y")
+
+cat(long_NA, " datos sin valor en long y ", lat_NA, " datos sin valor en lat por CALLE/NRO sin definir \n")
+cat("Total de observaciones: ", nrow(data))
+```
+
+## ¿Cuántas empresas fueron habilitadas en Olavarría durante los años 2018 a 2022?
+```{r EmpHabN}
+n_empresas <- nrow(data)
+cat("Número de empresas habilitadas en Olavarría al año 2022: ", n_empresas)
+
+# Numero de empresas habilitadas en cada año
+n_empresasANUAL <- table(data$FECHA_ALTA)
+n_empresasANUAL
+```
+
+```{r AltEmp}
+# Crear gráfico de barras 
+library(ggplot2)
+data_filtered <- data[data$FECHA_ALTA > 2018, ]
+ggplot(data_filtered, aes(x = FECHA_ALTA, fill = RAMA)) + 
+  geom_bar() +
+  labs(title = "Empresas habilitadas por año",
+       x = "Año",
+       y = "Número de empresas")
+```
+
+## Análisis por sector
+```{r EmpRam}
+library(ggplot2)
+library(leaflet)
+library(RColorBrewer)
+
+#Carga de datos sin NA's
+geodata <- na.omit(data)
+
+# Corrección de latitud y longitud
+# Remover todo excepto dígitos
+geodata$lat <- as.numeric(gsub("\\D", "", geodata$lat))
+geodata$long <- as.numeric(gsub("\\D", "", geodata$long))
+# Usar los 5 primeros digitos para obtener valores lat y long
+geodata$lat <- as.numeric(paste0("-", substr(geodata$lat, 1, 2), ".", substr(geodata$lat, 3, 5)))
+geodata$long <- as.numeric(paste0("-", substr(geodata$long, 1, 2), ".", substr(geodata$long, 3, 5)))
+
+# Distribución geografica de las empresas habilitadas al año 2022 agrupadas por sector
+map <- leaflet() %>%
+  addCircleMarkers(
+    data = geodata,
+    lng = ~long,
+    lat = ~lat,
+    radius = 10,
+    group = geodata$RAMA,
+    color = ~colorFactor(palette = "Set1", domain = unique(geodata$RAMA), levels = unique(geodata$RAMA))(geodata$RAMA),
+    popup = paste("NOMBRE: ", geodata$NOM_FANTASIA, "<br>",
+                  "RAMA: ", geodata$RAMA)
+  ) %>% 
+  addLegend(
+    position = "topright",
+    colors = brewer.pal(n = length(unique(geodata$RAMA)), name = "Set1"),
+    labels = unique(geodata$RAMA),
+    title = "Referencia de colores:"
+  )
+
+# Mostrar mapa
+map
+
+# Tabla de frecuencias por sector económico
+frec_sector2022 <- table(data$RAMA)
+
+# Ordenar la tabla de frecuencias de mayor a menor
+frec_sector2022 <- sort(frec_sector2022, decreasing = TRUE)
+
+# Mostrar tabla
+frec_sector2022
+
+# Crear gráfico de barras 
+ggplot(data, aes(x = reorder(RAMA, RAMA, function (x) -length (x)), fill = RAMA)) + 
+  geom_bar() +
+  labs(title = "Distribución de empresas por sector al 2022",
+       x = "Sector",
+       y = "Número de empresas")
+
+# Tabla de frecuencias por sector económico por año
+frec_sector <- table(data$RAMA, data$FECHA_ALTA)
+
+# Mostrar la tabla
+frec_sector
+
+# Crear el gráfico de líneas
+
+df_frec_sector <- data.frame(
+  AÑO = as.numeric(colnames(frec_sector)),
+  COMERCIO = as.numeric(frec_sector["COMERCIO",]),
+  CONSTRUCCION = as.numeric(frec_sector["CONSTRUCCION",]),
+  INDUSTRIAS = as.numeric(frec_sector["INDUSTRIAS",]),
+  MINERIA = as.numeric(frec_sector["MINERIA",]),
+  SERVICIOS = as.numeric(frec_sector["SERVICIOS",])
+)
+
+df_frec_sector_sin2018 <- slice(df_frec_sector, -1)
+
+ggplot(df_frec_sector_sin2018, aes(x = AÑO)) +
+  geom_line(aes(y = COMERCIO, color = "Comercio"), linewidth = 1) +
+  geom_line(aes(y = CONSTRUCCION, color = "Construcción"), linewidth = 1) +
+  geom_line(aes(y = INDUSTRIAS, color = "Industrias"), linewidth = 1) +
+  geom_line(aes(y = MINERIA, color = "Minería"), linewidth = 1) +
+  geom_line(aes(y = SERVICIOS, color = "Servicios"), linewidth = 1) +
+  scale_color_manual("", values = c("Comercio" = "blue", "Construcción" = "red", "Industrias" = "green", "Minería" = "purple", "Servicios" = "orange")) +
+  labs(x = "Año", y = "Cantidad de empresas", title = "Empresas habilitadas por año por sector")
+
+# Comparativa de crecimiento por sector
+
+##Acumulado
+df_frec_sector$COMERCIO_ACUM = cumsum(df_frec_sector$COMERCIO)
+df_frec_sector$CONSTRUCCION_ACUM = cumsum(df_frec_sector$CONSTRUCCION)
+df_frec_sector$INDUSTRIAS_ACUM = cumsum(df_frec_sector$INDUSTRIAS)
+df_frec_sector$MINERIA_ACUM = cumsum(df_frec_sector$MINERIA)
+df_frec_sector$SERVICIOS_ACUM = cumsum(df_frec_sector$SERVICIOS)
+
+df_frec_sector$TOTAL_ACUM <- rowSums(df_frec_sector[, c("COMERCIO_ACUM", "CONSTRUCCION_ACUM", "INDUSTRIAS_ACUM", "MINERIA_ACUM", "SERVICIOS_ACUM")])
+
+ggplot(df_frec_sector, aes(x = AÑO)) +
+  geom_line(aes(y = COMERCIO_ACUM, color = "Comercio"), linewidth = 1) +
+  geom_line(aes(y = CONSTRUCCION_ACUM, color = "Construcción"), linewidth = 1) +
+  geom_line(aes(y = INDUSTRIAS_ACUM, color = "Industrias"), linewidth = 1) +
+  geom_line(aes(y = MINERIA_ACUM, color = "Minería"), linewidth = 1) +
+  geom_line(aes(y = SERVICIOS_ACUM, color = "Servicios"), linewidth = 1) +
+  scale_color_manual("", values = c("Comercio" = "blue", "Construcción" = "red", "Industrias" = "green", "Minería" = "purple", "Servicios" = "orange")) +
+  labs(x = "Año", y = "Cantidad de empresas", title = "Evolución del total de empresas habilitadas al año")
+
+##Respecto del total
+df_frec_sector$COM_AC_PORC <- df_frec_sector$COMERCIO_ACUM * 100 / df_frec_sector$TOTAL_ACUM
+df_frec_sector$CON_AC_PORC <- df_frec_sector$CONSTRUCCION_ACUM * 100 / df_frec_sector$TOTAL_ACUM
+df_frec_sector$IND_AC_PORC <- df_frec_sector$INDUSTRIAS_ACUM * 100 / df_frec_sector$TOTAL_ACUM
+df_frec_sector$MIN_AC_PORC <- df_frec_sector$MINERIA_ACUM * 100 / df_frec_sector$TOTAL_ACUM
+df_frec_sector$SERV_AC_PORC <- df_frec_sector$SERVICIOS_ACUM * 100 / df_frec_sector$TOTAL_ACUM
+
+ggplot(df_frec_sector, aes(x = AÑO)) +
+  geom_line(aes(y = COM_AC_PORC, color = "Comercio"), linewidth = 1) +
+  geom_line(aes(y = CON_AC_PORC, color = "Construcción"), linewidth = 1) +
+  geom_line(aes(y = IND_AC_PORC, color = "Industrias"), linewidth = 1) +
+  geom_line(aes(y = MIN_AC_PORC, color = "Minería"), linewidth = 1) +
+  geom_line(aes(y = SERV_AC_PORC, color = "Servicios"), linewidth = 1) +
+  scale_color_manual("", values = c("Comercio" = "blue", "Construcción" = "red", "Industrias" = "green", "Minería" = "purple", "Servicios" = "orange")) +
+  labs(x = "Año", y = "Cantidad de empresas", title = "Evolución de la cantidad de empresas por sector respecto del total")
+
+##Porcentual
+df_frec_sector$COM_VAR_PORC <- df_frec_sector$COMERCIO_ACUM * 100 / lag(df_frec_sector$COMERCIO_ACUM) - 100
+df_frec_sector$CON_VAR_PORC <- df_frec_sector$CONSTRUCCION_ACUM * 100 / lag(df_frec_sector$CONSTRUCCION_ACUM) - 100
+df_frec_sector$IND_VAR_PORC <- df_frec_sector$INDUSTRIAS_ACUM * 100 / lag(df_frec_sector$INDUSTRIAS_ACUM) - 100
+df_frec_sector$MIN_VAR_PORC <- df_frec_sector$MINERIA_ACUM * 100 / lag(df_frec_sector$MINERIA_ACUM) - 100
+df_frec_sector$SERV_VAR_PORC <- df_frec_sector$SERVICIOS_ACUM * 100 / lag(df_frec_sector$SERVICIOS_ACUM) - 100
+
+ggplot(slice(df_frec_sector, -1), aes(x = AÑO)) +
+  geom_line(aes(y = COM_VAR_PORC, color = "Comercio"), linewidth = 1) +
+  geom_line(aes(y = CON_VAR_PORC, color = "Construcción"), linewidth = 1) +
+  geom_line(aes(y = IND_VAR_PORC, color = "Industrias"), linewidth = 1) +
+  geom_line(aes(y = MIN_VAR_PORC, color = "Minería"), linewidth = 1) +
+  geom_line(aes(y = SERV_VAR_PORC, color = "Servicios"), linewidth = 1) +
+  scale_color_manual("", values = c("Comercio" = "blue", "Construcción" = "red", "Industrias" = "green", "Minería" = "purple", "Servicios" = "orange")) +
+  labs(x = "Año", y = "Cantidad de empresas", title = "Crecimiento porcentual de la cantidad de empresas por sector")
+
+df_frec_sector
+
+```
+
+## Análisis por actividad económica
+```{r EmpAct, out.width = NULL, out.height = NULL}
+library(dplyr)
+library(ggplot2)
+
+# Tabla de frecuencias por actividad económica
+frec_actividad <- table(data$ACTIVIDAD)
+
+# Ordenar la tabla en orden descendente
+frec_actividad<- sort(frec_actividad, decreasing = TRUE)
+
+# Crear un data frame con las primeras 10 filas
+df_frec_actividad <- as.data.frame(frec_actividad[1:10])
+
+# Mostrar el data frame
+df_frec_actividad
+
+# Crear gráfico de barras
+ggplot(df_frec_actividad, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Actividades más frecuentes",
+    x = "Actividad",
+    y = "Frecuencia") +
+  theme(axis.text.x = element_blank(),
+        legend.key.size = unit(0.15, "cm"),
+        legend.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "cm"))
+```
+
+## Análisis de subactividades
+```{r EmpSubact, out.width = NULL, out.height = NULL}
+library(dplyr)
+library(ggplot2)
+
+# Tabla de frecuencias por subactividad
+frec_subactividad <- sort(table(data$SUB_ACTIVIDAD), decreasing = TRUE)
+df_frec_subactividad <- as.data.frame(frec_subactividad[1:10])
+df_frec_subactividad
+
+# Crear gráfico de barras
+ggplot(df_frec_subactividad, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades más frecuentes",
+    x = "Subactividad",
+    y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+```
+
+
+## Conclusiones
+A través del análisis de la distribución de empresas por sector hemos observado que en mayor medida pertenecen al sector servicios, seguido del sector comercio y luego industria.
+Se observa en la distribución de empresas por actividad económica que en el sector comercio las actividades mas frecuentes son la venta minorista tanto de alimentos y productos de supermercados como de articulos varios e indumentaria. En el caso de los servicios, predominan las actividades de servicios empresariales, servicios varios ( como servicios de alojamiento y alimentos, servicios de salud, entre otros) y servicios de transporte de carga.
+
+
+Este tipo de análisis puede ser muy útil para la toma de decisiones de inversión o para el diseño de políticas públicas que tengan como objetivo el desarrollo económico de la ciudad.
+Con base en los resultados obtenidos del análisis, se pueden tomar diversas decisiones, tales como incentivar la formación, crecimiento y desarrollo de empresas en sectores como la industria, la construcción y la minería, los cuales tienen una menor presencia en la ciudad, o promover la especialización y el desarrollo de servicios empresariales y de transporte y almacenamiento, que son las actividades económicas con mayor número de empresas habilitadas.
+

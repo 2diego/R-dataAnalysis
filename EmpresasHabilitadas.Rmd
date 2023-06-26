@@ -1,0 +1,280 @@
+---
+title: "Empresas habilitadas en Olavarría durante el 2022"
+author: "Diego Maldonado"
+date: "2023-04-24"
+output: html_document
+---
+<style type="text/css">
+.main-container {
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+# Análisis de empresas habilitadas en Olavarría durante el año 2022
+
+## Carga de datos
+```{r EmpHab, message=FALSE}
+library(readxl)
+library(dplyr)
+data <- read.csv("~/Descargas/Empresashabilitadas2022.csv")
+
+# Eliminar columnas sin uso
+data <- data %>%
+  select(-NOMBRE, -ACTIVIDAD_REAL, -CALLE, -NRO, -FECHA_ALTA)
+# Mutar S/D a NA
+data <- data %>%
+  mutate(lat = na_if(lat, "S/D"), long = na_if(long, "S/D"))
+# Check de NA en lat y long por falta de datos en CALLE/NRO (477)
+long_NA <- sum(is.na(data$long))
+lat_NA <- sum(is.na(data$lat))
+
+cat(long_NA, " datos sin valor en long y ", lat_NA, " datos sin valor en lat por CALLE/NRO sin definir \n")
+cat("Total de observaciones: ", nrow(data))
+
+head(data)
+```
+
+## ¿Cuántas empresas fueron habilitadas en Olavarría durante el año 2022?
+```{r EmpHabN}
+n_empresas <- nrow(data)
+cat("Número de empresas habilitadas en Olavarría durante el año 2022: ", n_empresas)
+```
+
+## Distribución geográfica
+```{r EmpMap}
+library(leaflet)
+geodata <- na.omit(data)
+
+# Corrección de latitud y longitud
+# Remover todo excepto dígitos
+geodata$lat <- as.numeric(gsub("\\D", "", geodata$lat))
+geodata$long <- as.numeric(gsub("\\D", "", geodata$long))
+# Usar los 5 primeros digitos para obtener valores lat y long
+geodata$lat <- as.numeric(paste0("-", substr(geodata$lat, 1, 2), ".", substr(geodata$lat, 3, 5)))
+geodata$long <- as.numeric(paste0("-", substr(geodata$long, 1, 2), ".", substr(geodata$long, 3, 5)))
+
+# Crear mapa interactivo
+map <- leaflet(geodata) %>%
+  addTiles() %>%
+  setView(lng = -60.222, lat = -36.892, zoom = 13)
+
+# Agrupar marcadores cercanos
+map <- map %>% addCircleMarkers(
+  data = geodata,
+  lng = ~long,
+  lat = ~lat,
+  radius = 10,
+  popup = paste("NOMBRE: ", geodata$NOM_FANTASIA)
+)
+
+# Mostrar mapa
+map
+```
+
+## Análisis por sector
+```{r EmpRam}
+library(ggplot2)
+library(leaflet)
+library(RColorBrewer)
+
+# Agrupar en función del sector
+map <- leaflet() %>%
+  addCircleMarkers(
+    data = geodata,
+    lng = ~long,
+    lat = ~lat,
+    radius = 10,
+    group = geodata$RAMA,
+    color = ~colorFactor(palette = "Set1", domain = unique(geodata$RAMA), levels = unique(geodata$RAMA))(geodata$RAMA),
+    popup = paste("NOMBRE: ", geodata$NOM_FANTASIA, "<br>",
+                  "RAMA: ", geodata$RAMA)
+  ) %>% 
+  addLegend(
+    position = "topright",
+    colors = brewer.pal(n = length(unique(geodata$RAMA)), name = "Set1"),
+    labels = unique(geodata$RAMA),
+    title = "Referencia de colores:"
+  )
+
+# Mostrar mapa
+map
+
+# Tabla de frecuencias por sector económico
+frec_sector <- table(data$RAMA)
+
+# Ordenar la tabla de frecuencias de mayor a menor
+frec_sector <- sort(frec_sector, decreasing = TRUE)
+
+# Mostrar la tabla
+t(frec_sector)
+
+# Crear gráfico de barras
+ggplot(data, aes(x = RAMA, fill = RAMA)) + 
+  geom_bar() +
+  labs(title = "Distribución de empresas por sector",
+       x = "Sector",
+       y = "Número de empresas")
+```
+
+## Análisis por actividad económica
+```{r EmpAct}
+library(dplyr)
+library(ggplot2)
+
+# Tabla de frecuencias por actividad económica
+frec_actividad <- table(data$ACTIVIDAD)
+
+# Ordenar la tabla en orden descendente
+frec_actividad <- sort(frec_actividad, decreasing = TRUE)
+
+# Crear un data frame con las primeras 15 filas
+df_frec_actividad <- data.frame(
+  Actividad = names(frec_actividad)[1:15],
+  Frecuencia = as.numeric(frec_actividad[1:15])
+) %>% 
+  select(Actividad, Frecuencia = Frecuencia) 
+
+# Renombrar la columna de frecuencia
+colnames(df_frec_actividad)[2] <- "Frecuencia"
+
+# Mostrar el data frame
+df_frec_actividad
+
+# Obtener las 5 actividades más frecuentes y agrupar el resto como "Otras"
+activity_data <- data %>%
+  count(ACTIVIDAD) %>%
+  mutate(ACTIVIDAD = ifelse(rank(desc(n)) <= 5, as.character(ACTIVIDAD), "Otras")) %>%
+  group_by(ACTIVIDAD) %>%
+  summarize(n = sum(n)) %>%
+  mutate(percent = round(n/sum(n)*100,1))
+
+# Sumar porcentajes de "Otras" en una sola porción
+others_percent <- sum(activity_data$percent[activity_data$ACTIVIDAD == "Otras"])
+activity_data <- activity_data %>%
+  filter(ACTIVIDAD != "Otras") %>%
+  rbind(data.frame(ACTIVIDAD = "Otras", n = sum(activity_data$n[activity_data$ACTIVIDAD == "Otras"]), percent = others_percent))
+
+# Crear gráfico de torta
+ggplot(activity_data, aes(x = "", y = percent, fill = ACTIVIDAD)) +
+  geom_bar(stat = "identity", color = "black", size = 0.75) +
+  geom_text(aes(label = paste0(percent, "%")), position = position_stack(vjust = 0.5), color = "black", size = 5) +
+  coord_polar(theta = "y") +
+  theme_void() +
+  labs(title = "Distribución de empresas por actividad económica") +
+  scale_fill_brewer(palette = "Set3")
+```
+
+## Análisis de subactividades
+```{r EmpSubact, out.width = NULL, out.height = NULL}
+library(dplyr)
+library(ggplot2)
+
+# Tabla de frecuencias por subactividad
+frec_subactividad <- sort(table(data$SUB_ACTIVIDAD), decreasing = TRUE)
+df_frec_subactividad <- as.data.frame(frec_subactividad[1:10])
+df_frec_subactividad
+
+# Crear gráfico de barras
+ggplot(df_frec_subactividad, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades más frecuentes",
+    x = "Subactividad",
+    y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+
+# Subactividades que integran "VENTA MINORISTA DE ALIMENTOS Y PRODUCTOS DE SUPERMERCADO"
+frec_sub_vta <- sort(table(subset(data, ACTIVIDAD == "VENTA MINORISTA DE ALIMENTOS Y PRODUCTOS DE SUPERMERCADO")$SUB_ACTIVIDAD), decreasing = TRUE)
+df_frec_sub_vta <- as.data.frame(frec_sub_vta[1:9])
+df_frec_sub_vta
+
+# Crear gráfico de barras
+ggplot(data = df_frec_sub_vta, aes(x = Var1, fill = Var1, y = Freq)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Subactividades de VENTA MINORISTA DE ALIMENTOS Y PRODUCTOS DE SUPERMERCADO",
+       x = "Subactividad",
+       y = "Frecuencia") +
+  theme(axis.text.x = element_blank())
+
+# Subactividades que integran "SERVICIOS EMPRESARIALES"
+frec_sub_se <- sort(table(data[data$ACTIVIDAD == "SERVICIOS EMPRESARIALES", "SUB_ACTIVIDAD"]), decreasing = TRUE)
+df_frec_sub_se <- as.data.frame(frec_sub_se[1:10])
+df_frec_sub_se
+
+# Crear gráfico de barras
+ggplot(df_frec_sub_se, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades de SERVICIOS EMPRESARIALES",
+      x = "Subactividad",
+      y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+
+# Subactividades que integran "SERVICIOS VARIOS"
+frec_sub_sv <-  sort(table(subset(data, ACTIVIDAD == "SERVICIOS VARIOS")$SUB_ACTIVIDAD), decreasing = TRUE)
+df_frec_sub_sv <- as.data.frame(frec_sub_sv[1:10])
+df_frec_sub_sv
+
+# Crear gráfico de barras
+ggplot(df_frec_sub_sv, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades de SERVICIOS VARIOS",
+      x = "Subactividad",
+      y = "Frecuencia") +
+ theme(axis.text.x = element_blank(),
+        legend.text = element_text(size = 5, hjust = 1))
+
+# Subactividades que integran SECTOR "SERVICIOS"
+frec_sub_serv <- sort(table(data[data$RAMA == "SERVICIOS", "SUB_ACTIVIDAD"]), decreasing = TRUE)
+df_frec_sub_serv <- as.data.frame(frec_sub_serv[1:10])
+df_frec_sub_serv
+
+# Crear gráfico de barras
+ggplot(df_frec_sub_serv, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades por sector SERVICIOS",
+      x = "Subactividad",
+      y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+
+# Subactividades que integran SECTOR "COMERCIO"
+frec_sub_com <- sort(table(data[data$RAMA == "COMERCIO", "SUB_ACTIVIDAD"]), decreasing = TRUE)
+df_frec_sub_com <- as.data.frame(frec_sub_com[1:10])
+df_frec_sub_com
+
+# Crear gráfico de barras
+ggplot(df_frec_sub_com, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades por sector COMERCIO",
+      x = "Subactividad",
+      y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+
+# Subactividades que integran SECTOR "INDUSTRIAS"
+frec_sub_ind <- sort(table(data[data$RAMA == "INDUSTRIAS", "SUB_ACTIVIDAD"]), decreasing = TRUE)
+df_frec_sub_ind <- as.data.frame(frec_sub_ind[1:10])
+df_frec_sub_ind
+
+# Crear gráfico de barras
+ggplot(df_frec_sub_ind, aes(x = Var1, y = Freq, fill = Var1)) +
+ geom_bar(stat = "identity") +
+ labs(title = "Subactividades por sector INDUSTRIAS",
+      x = "Subactividad",
+      y = "Frecuencia") +
+ theme(axis.text.x = element_blank())
+```
+
+
+## Conclusiones
+A través del análisis de la distribución de empresas por sector hemos observado que en mayor medida pertenecen al sector servicios, seguido del sector comercio y luego industria.
+Se observa en la distribución de empresas por actividad económica que en el sector comercio las actividades mas frecuentes son la venta minorista tanto de alimentos y productos de supermercados como de articulos varios e indumentaria. En el caso de los servicios, predominan las actividades de servicios empresariales, servicios varios ( como servicios de alojamiento y alimentos, servicios de salud, entre otros) y servicios de transporte de carga.
+
+
+Este tipo de análisis puede ser muy útil para la toma de decisiones de inversión o para el diseño de políticas públicas que tengan como objetivo el desarrollo económico de la ciudad.
+Con base en los resultados obtenidos del análisis, se pueden tomar diversas decisiones, tales como incentivar la formación, crecimiento y desarrollo de empresas en sectores como la industria, la construcción y la minería, los cuales tienen una menor presencia en la ciudad, o promover la especialización y el desarrollo de servicios empresariales y de transporte y almacenamiento, que son las actividades económicas con mayor número de empresas habilitadas.
+
